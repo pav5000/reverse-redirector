@@ -1,19 +1,22 @@
-package servercore
+package proto
 
 import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/pkg/errors"
 )
 
 const (
 	MaxMessageSize = 1024
+	DialPrefix     = "Dial "
 )
 
 var (
-	ErrMsgTooBig = errors.New(fmt.Sprintf("message must not exceed %d bytes", MaxMessageSize))
+	ErrMsgTooBig              = errors.New(fmt.Sprintf("message must not exceed %d bytes", MaxMessageSize))
+	ErrBadDialRequestReceived = errors.New("bad dial request received")
 )
 
 func SendMsg(w io.Writer, msg string) error {
@@ -46,7 +49,7 @@ func ReceiveMsg(w io.Reader) (string, error) {
 }
 
 func SendDialRequest(conn io.ReadWriter, addr string) error {
-	err := SendMsg(conn, "Dial "+addr)
+	err := SendMsg(conn, DialPrefix+addr)
 	if err != nil {
 		return errors.WithMessage(err, "sending dial message")
 	}
@@ -61,4 +64,37 @@ func SendDialRequest(conn io.ReadWriter, addr string) error {
 	}
 
 	return errors.New("remote answered: " + msg)
+}
+
+func ReceiveDialRequest(conn io.Reader) (string, error) {
+	msg, err := ReceiveMsg(conn)
+	if err != nil {
+		return "", err
+	}
+
+	if !strings.HasPrefix(msg, DialPrefix) {
+		return "", ErrBadDialRequestReceived
+	}
+
+	dialAddr := strings.TrimPrefix(msg, DialPrefix)
+	return dialAddr, nil
+}
+
+func ReceiveOkOrError(conn io.Reader) error {
+	msg, err := ReceiveMsg(conn)
+	if err != nil {
+		return err
+	}
+	if msg == "ok" {
+		return nil
+	}
+	return errors.New(msg)
+}
+
+func SendOk(conn io.Writer) error {
+	return SendMsg(conn, "ok")
+}
+
+func SendError(conn io.Writer, err string) error {
+	return SendMsg(conn, err)
 }

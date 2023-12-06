@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/pav5000/reverse-redirector/internal/proto"
 )
 
 const (
@@ -59,7 +61,7 @@ func (c *Core) HandleClientConnection(conn net.Conn, token string) error {
 		return ErrIncorrectToken
 	}
 
-	err := SendMsg(conn, "ok")
+	err := proto.SendMsg(conn, "ok")
 	if err != nil {
 		return err
 	}
@@ -108,7 +110,7 @@ func (c *Core) RemoveConnectionHandler() *ClientConnectionHandler {
 }
 
 func checkToken(conn net.Conn, token string) bool {
-	inMsg, err := ReceiveMsg(conn)
+	inMsg, err := proto.ReceiveMsg(conn)
 	if err != nil {
 		return false
 	}
@@ -123,7 +125,7 @@ func (h *ClientConnectionHandler) Close() {
 func (h *ClientConnectionHandler) ProcessForwardRequest(req ForwardRequest) error {
 	defer h.Close()
 
-	err := SendDialRequest(h.Connection, req.DestAddr)
+	err := proto.SendDialRequest(h.Connection, req.DestAddr)
 	if err != nil {
 		return err
 	}
@@ -131,6 +133,7 @@ func (h *ClientConnectionHandler) ProcessForwardRequest(req ForwardRequest) erro
 	go func() {
 		_, _ = io.Copy(req.Connection, h.Connection)
 		req.Connection.Close()
+		h.Connection.Close()
 	}()
 
 	_, _ = io.Copy(h.Connection, req.Connection)
