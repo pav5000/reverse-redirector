@@ -2,11 +2,10 @@ package proto
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -51,12 +50,12 @@ func ReceiveMsg(w io.Reader) (string, error) {
 func SendDialRequest(conn io.ReadWriter, addr string) error {
 	err := SendMsg(conn, DialPrefix+addr)
 	if err != nil {
-		return errors.WithMessage(err, "sending dial message")
+		return fmt.Errorf("sending dial message: %w", err)
 	}
 
 	msg, err := ReceiveMsg(conn)
 	if err != nil {
-		return errors.WithMessage(err, "receiving dial confirmation")
+		return fmt.Errorf("receiving dial confirmation: %w", err)
 	}
 
 	if msg == "ok" {

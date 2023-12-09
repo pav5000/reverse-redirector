@@ -1,11 +1,11 @@
 package clientcore
 
 import (
+	"errors"
 	"io"
 	"net"
 
 	"github.com/pav5000/reverse-redirector/internal/proto"
-	"github.com/pkg/errors"
 )
 
 var (
