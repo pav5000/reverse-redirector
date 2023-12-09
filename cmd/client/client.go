@@ -34,11 +34,25 @@ func main() {
 		serverAddr := serverAddr
 		go func() {
 			for {
-				err := core.ProcessTaskFromServer(serverAddr)
+				connection, err := core.GetServerConnection(serverAddr)
 				if err != nil {
-					log.Println("Error processing server", serverAddr, ":", err)
+					log.Println("Error getting server connection to", serverAddr, ":", err)
 					time.Sleep(ErrRetryTimeout)
+					continue
 				}
+
+				err = connection.WaitForTask()
+				if err != nil {
+					log.Println("Error getting task:", err)
+					continue
+				}
+
+				go func() {
+					err = connection.ProcessTask()
+					if err != nil {
+						log.Println("Error processing task:", err)
+					}
+				}()
 			}
 		}()
 	}

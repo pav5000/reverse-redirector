@@ -6,19 +6,20 @@ import (
 	"io"
 	"log"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/pav5000/reverse-redirector/internal/proto"
 )
 
 const (
-	ConnectionCheckPeriod = time.Second * 20
+	ConnectionCheckPeriod                 = time.Second * 20
+	WaitingForFreeClientConnectionTimeout = time.Second * 10
 )
 
 type Core struct {
-	lock          sync.Mutex
-	clientHandler *ClientConnectionHandler
+	newClientChecked   chan struct{}        // we got a message here when the new client successfully connects
+	checkedConnections chan net.Conn        // client connections with checked token
+	forwardRequests    chan *ForwardRequest // incoming requests to forward connection to client
 }
 
 type ForwardRequest struct {
@@ -27,7 +28,11 @@ type ForwardRequest struct {
 }
 
 func New() *Core {
-	return &Core{}
+	return &Core{
+		newClientChecked:   make(chan struct{}),
+		checkedConnections: make(chan net.Conn),
+		forwardRequests:    make(chan *ForwardRequest),
+	}
 }
 
 func (c *Core) ListenClients(addr string, token string) error {
@@ -43,70 +48,54 @@ func (c *Core) ListenClients(addr string, token string) error {
 			return fmt.Errorf("cannot accept a connection: %v", err)
 		}
 
-		go c.HandleClientConnection(conn, token)
+		go func(conn net.Conn) {
+			if !checkToken(conn, token) {
+				conn.Close()
+				return
+			}
 
+			// Maintaning only one client connected at the same time
+			select {
+			case c.newClientChecked <- struct{}{}:
+			default:
+			}
+
+			select {
+			case c.checkedConnections <- conn:
+			case <-c.newClientChecked:
+				conn.Close()
+				return
+			}
+		}(conn)
 	}
 }
 
 var ErrIncorrectToken = errors.New("incorrect token")
 
-type ClientConnectionHandler struct {
-	Connection net.Conn
-	EndChan    chan struct{}
-}
-
-func (c *Core) HandleClientConnection(conn net.Conn, token string) error {
-	defer conn.Close()
-	if !checkToken(conn, token) {
-		return ErrIncorrectToken
-	}
-
-	err := proto.SendMsg(conn, "ok")
-	if err != nil {
-		return err
-	}
-
-	// Handshake done
-
-	handler := &ClientConnectionHandler{
-		Connection: conn,
-		EndChan:    make(chan struct{}),
-	}
-	// Setting this handler as active handler which will process the next forwarding request
-	c.ReplaceClientConnectionHandler(handler)
-
-	// Waiting for a forwarding request
-	<-handler.EndChan
-	return nil
-}
-
 func (c *Core) ProcessForwardRequest(req ForwardRequest) {
-	handler := c.RemoveConnectionHandler()
-	if handler == nil {
-		req.Connection.Close()
+	defer req.Connection.Close()
+
+	var clientConn net.Conn
+	select {
+	case clientConn = <-c.checkedConnections:
+	case <-time.NewTimer(WaitingForFreeClientConnectionTimeout).C:
 		return
 	}
-	handler.ProcessForwardRequest(req)
-}
+	defer clientConn.Close()
 
-func (c *Core) ReplaceClientConnectionHandler(handler *ClientConnectionHandler) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	if c.clientHandler != nil {
-		c.clientHandler.Close()
+	err := proto.SendDialRequest(clientConn, req.DestAddr)
+	if err != nil {
+		log.Println("Error sending dial request:", err)
+		return
 	}
 
-	c.clientHandler = handler
-}
+	go func() {
+		_, _ = io.Copy(req.Connection, clientConn)
+		req.Connection.Close()
+		clientConn.Close()
+	}()
 
-func (c *Core) RemoveConnectionHandler() *ClientConnectionHandler {
-	var handler *ClientConnectionHandler
-	c.lock.Lock()
-	handler = c.clientHandler
-	c.clientHandler = nil
-	c.lock.Unlock()
-	return handler
+	_, _ = io.Copy(clientConn, req.Connection)
 }
 
 func checkToken(conn net.Conn, token string) bool {
@@ -114,29 +103,13 @@ func checkToken(conn net.Conn, token string) bool {
 	if err != nil {
 		return false
 	}
-	return inMsg == token
-}
-
-func (h *ClientConnectionHandler) Close() {
-	_ = h.Connection.Close()
-	close(h.EndChan)
-}
-
-func (h *ClientConnectionHandler) ProcessForwardRequest(req ForwardRequest) error {
-	defer h.Close()
-
-	err := proto.SendDialRequest(h.Connection, req.DestAddr)
-	if err != nil {
-		return err
+	if inMsg != token {
+		return false
 	}
 
-	go func() {
-		_, _ = io.Copy(req.Connection, h.Connection)
-		req.Connection.Close()
-		h.Connection.Close()
-	}()
-
-	_, _ = io.Copy(h.Connection, req.Connection)
-
-	return nil
+	err = proto.SendOk(conn)
+	if err != nil {
+		return false
+	}
+	return true
 }

@@ -1,11 +1,11 @@
 package clientcore
 
 import (
-	"errors"
 	"io"
 	"net"
 
 	"github.com/pav5000/reverse-redirector/internal/proto"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -23,46 +23,62 @@ func New(token string) *ClientCore {
 	}
 }
 
-func (c *ClientCore) ProcessTaskFromServer(serverAddr string) error {
+type Connection struct {
+	serverConn net.Conn
+	dialAddr   string
+}
+
+func (c *ClientCore) GetServerConnection(serverAddr string) (*Connection, error) {
 	serverConn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer serverConn.Close()
 
 	err = proto.SendMsg(serverConn, c.token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = proto.ReceiveOkOrError(serverConn)
 	if err != nil {
-		return ErrCannotGetServerConfirmation
+		return nil, ErrCannotGetServerConfirmation
 	}
 
-	dialAddr, err := proto.ReceiveDialRequest(serverConn)
-	if err != nil {
-		return ErrReceivingDialRequest
-	}
+	return &Connection{
+		serverConn: serverConn,
+	}, nil
+}
 
-	redirectConn, err := net.Dial("tcp", dialAddr)
+func (c *Connection) WaitForTask() error {
+	dialAddr, err := proto.ReceiveDialRequest(c.serverConn)
 	if err != nil {
-		proto.SendError(serverConn, err.Error())
+		return err
+	}
+	c.dialAddr = dialAddr
+	return nil
+}
+
+func (c *Connection) ProcessTask() error {
+	defer c.serverConn.Close()
+
+	redirectConn, err := net.Dial("tcp", c.dialAddr)
+	if err != nil {
+		proto.SendError(c.serverConn, err.Error())
 		return err
 	}
 	defer redirectConn.Close()
 
-	err = proto.SendOk(serverConn)
+	err = proto.SendOk(c.serverConn)
 	if err != nil {
 		return err
 	}
 
 	go func() {
-		_, _ = io.Copy(serverConn, redirectConn)
-		serverConn.Close()
+		_, _ = io.Copy(c.serverConn, redirectConn)
+		c.serverConn.Close()
 		redirectConn.Close()
 	}()
 
-	_, _ = io.Copy(redirectConn, serverConn)
+	_, _ = io.Copy(redirectConn, c.serverConn)
 	return nil
 }

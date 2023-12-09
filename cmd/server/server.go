@@ -55,9 +55,9 @@ func main() {
 	for {
 		err := core.ListenClients(conf.ListenAddr, conf.Token)
 		if err != nil {
-			log.Println(err)
+			log.Println("Listening clients at", conf.ListenAddr, "failed:", err)
 		}
-		log.Println("will retry to listen in", ListenRetry)
+		log.Println("Will retry to listen in", ListenRetry)
 		time.Sleep(ListenRetry)
 	}
 }
