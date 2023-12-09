@@ -1,0 +1,3 @@
+servers:
+  - your.vm.ip:8080
+token: place your token here

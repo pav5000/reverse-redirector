@@ -1,0 +1,5 @@
+listen: ":8080"
+token: place your token here
+redirects:
+  - from: 127.0.0.1:8000 # port to listen on the server side
+    to: "127.0.0.1:22" # addr to forward this port to on the client side
