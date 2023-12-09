@@ -33,6 +33,7 @@ func main() {
 	for _, serverAddr := range conf.ServerAddrs {
 		serverAddr := serverAddr
 		go func() {
+			log.Println("Started server connector to", serverAddr)
 			for {
 				connection, err := core.GetServerConnection(serverAddr)
 				if err != nil {
